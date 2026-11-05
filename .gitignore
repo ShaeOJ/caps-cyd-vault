@@ -1,0 +1,8 @@
+.pio/
+.vscode/
+.idea/
+*.swp
+*.bak
+*~
+build/
+.DS_Store
