@@ -11,14 +11,20 @@ void VaultUI::begin() {
     pinMode(LED_R, OUTPUT);
     pinMode(LED_G, OUTPUT);
     pinMode(LED_B, OUTPUT);
-    setLed(false, false, false);
+    // CYD RGB LEDs are active LOW — HIGH turns them off
+    digitalWrite(LED_R, HIGH);
+    digitalWrite(LED_G, HIGH);
+    digitalWrite(LED_B, HIGH);
+
+    // Turn on backlight (GPIO 21 on 1-USB CYD, GPIO 27 on 2-USB CYD)
+    pinMode(21, OUTPUT);
+    digitalWrite(21, HIGH);
+    pinMode(27, OUTPUT);
+    digitalWrite(27, HIGH);
 
     tft.init();
     tft.setRotation(1); // 320x240 landscape
     tft.fillScreen(COLOR_BG);
-
-    pinMode(TFT_BL, OUTPUT);
-    digitalWrite(TFT_BL, HIGH);
 
     SPI.begin(TOUCH_CLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS);
     ts.begin();

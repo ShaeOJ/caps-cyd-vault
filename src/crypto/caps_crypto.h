@@ -1,13 +1,8 @@
 #pragma once
 #include <Arduino.h>
 
-#if __has_include("vault_types.h")
-#include "config.h"
-#include "vault_types.h"
-#else
 #include "../../include/config.h"
 #include "../../include/vault_types.h"
-#endif
 
 #include <Bitcoin.h>
 #include <PSBT.h>

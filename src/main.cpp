@@ -1,6 +1,6 @@
 #include <Arduino.h>
-#include "config.h"
-#include "vault_types.h"
+#include "../include/config.h"
+#include "../include/vault_types.h"
 #include "crypto/caps_crypto.h"
 #include "storage/sd_vault.h"
 #include "ui/vault_ui.h"

@@ -6,13 +6,8 @@
 #include <TFT_eSPI.h>
 #include <ArduinoJson.h>
 
-#if __has_include("vault_types.h")
-#include "config.h"
-#include "vault_types.h"
-#else
 #include "../../include/config.h"
 #include "../../include/vault_types.h"
-#endif
 
 #define MAX_GALLERY_CARDS 32
 
