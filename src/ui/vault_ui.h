@@ -1,11 +1,20 @@
 #pragma once
 #include <Arduino.h>
 #include <TFT_eSPI.h>
-#include <XPT2046_Bitbang.h>
+#include <Wire.h>
+#include <TAMC_GT911.h>
 #include <qrcode.h>
 
 #include "../../include/config.h"
 #include "../../include/vault_types.h"
+
+enum TouchMode {
+    TOUCH_UNKNOWN = 0,
+    TOUCH_GT911 = 1,
+    TOUCH_CST816 = 2,
+    TOUCH_CHSC6X = 3,
+    TOUCH_XPT2046 = 4
+};
 
 class VaultUI {
 public:
@@ -36,8 +45,10 @@ public:
 
 private:
     TFT_eSPI tft;
-    XPT2046_Bitbang ts;
+    TAMC_GT911 ts;
+    bool gt911Ready = false;
 
+    bool pollGT911(int16_t& x, int16_t& y);
     void drawHeader(const char* title, bool sdOk, bool unlocked, ChainNetwork chain);
     void drawButton(int x, int y, int w, int h, const char* label, uint16_t borderColor, uint16_t textColor);
     uint16_t getTierColor(int tier);

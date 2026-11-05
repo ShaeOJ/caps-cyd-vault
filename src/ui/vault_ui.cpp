@@ -3,7 +3,8 @@
 
 VaultUI UI;
 
-VaultUI::VaultUI() : ts(TOUCH_MOSI, TOUCH_MISO, TOUCH_CLK, TOUCH_CS, SCREEN_WIDTH, SCREEN_HEIGHT) {
+VaultUI::VaultUI() : ts(33, 32, 21, 25, 480, 320) {
+    gt911Ready = false;
 }
 
 void VaultUI::begin() {
@@ -15,44 +16,85 @@ void VaultUI::begin() {
     digitalWrite(LED_G, HIGH);
     digitalWrite(LED_B, HIGH);
 
-    // Turn on backlight (GPIO 21 on 1-USB CYD, GPIO 27 on 2-USB CYD)
-    pinMode(21, OUTPUT);
-    digitalWrite(21, HIGH);
+    // Physical BOOT button on GPIO 0 as immediate companion / fallback input
+    pinMode(0, INPUT_PULLUP);
+
+    // Turn on backlight (GPIO 27 is the backlight on this board)
     pinMode(27, OUTPUT);
     digitalWrite(27, HIGH);
 
     tft.init();
-    tft.setRotation(1); // 320x240 landscape
+    tft.setRotation(1); // 480x320 landscape
     tft.fillScreen(COLOR_BG);
 
-    // Initialize bit-bang touch controller (completely independent of hardware SPI & SD card)
-    ts.begin();
-    ts.setCalibration(250, 3850, 250, 3850);
+    // Ensure backlight pin stays HIGH
+    digitalWrite(27, HIGH);
 
-    Serial.println("[UI] Display and XPT2046 Bitbang Touch initialized (320x240)");
+    // Initialize I2C with fast timeout so polling never stalls
+    Wire.begin(33, 32);
+    Wire.setTimeOut(20); // 20ms timeout instead of default 1000ms
+    delay(50);
+
+    // Scan I2C bus to discover touch address
+    Serial.println("[I2C] Scanning I2C bus on SDA=33, SCL=32...");
+    uint8_t detectedAddr = 0;
+    for (uint8_t a = 1; a < 127; a++) {
+        Wire.beginTransmission(a);
+        if (Wire.endTransmission() == 0) {
+            Serial.printf("[I2C] Responding device found at 0x%02X\n", a);
+            if (a == GT911_ADDR1 || a == GT911_ADDR2) {
+                detectedAddr = a;
+            }
+        }
+    }
+
+    if (detectedAddr == GT911_ADDR2) {
+        Serial.println("[UI] Initializing GT911 at address 0x14 (GT911_ADDR2)...");
+        ts.begin(GT911_ADDR2);
+    } else {
+        Serial.println("[UI] Initializing GT911 at address 0x5D (GT911_ADDR1)...");
+        ts.begin(GT911_ADDR1);
+    }
+
+    ts.setRotation(ROTATION_LEFT);
+    gt911Ready = true;
+
+    // Ensure backlight pin stays HIGH
+    digitalWrite(27, HIGH);
+
+    Serial.printf("[UI] Display and GT911 Touch initialized (%dx%d)\n", SCREEN_WIDTH, SCREEN_HEIGHT);
+}
+
+bool VaultUI::pollGT911(int16_t& x, int16_t& y) {
+    if (!gt911Ready) return false;
+    ts.read();
+    if (ts.isTouched && ts.touches > 0) {
+        if (ts.points[0].x > 480 || ts.points[0].y > 320) return false;
+
+        int rawX = 480 - ts.points[0].x;
+        int rawY = 320 - ts.points[0].y;
+        if (rawX < 0) rawX = 0; if (rawX >= SCREEN_WIDTH) rawX = SCREEN_WIDTH - 1;
+        if (rawY < 0) rawY = 0; if (rawY >= SCREEN_HEIGHT) rawY = SCREEN_HEIGHT - 1;
+        x = rawX;
+        y = rawY;
+        Serial.printf("[TOUCH-GT911] Pressed at x=%d y=%d (raw: %d, %d)\n", x, y, ts.points[0].x, ts.points[0].y);
+        return true;
+    }
+    return false;
 }
 
 bool VaultUI::getTouch(int16_t& x, int16_t& y) {
-    TouchPoint p = ts.getTouch();
-    if (p.zRaw < 100) {
-        return false;
+    // 1. Physical BOOT button on CYD PCB (GPIO 0) — guaranteed working click!
+    if (digitalRead(0) == LOW) {
+        delay(150);
+        x = SCREEN_WIDTH / 2;
+        y = 110; // Default button target
+        Serial.println("[INPUT] BOOT button pressed — activating action!");
+        return true;
     }
 
-    // In landscape rotation 1 (320x240):
-    // CYD 2.8 resistive panel maps raw X to screen height and raw Y to screen width
-    // XPT2046_Bitbang reads xRaw from 0x91 and yRaw from 0xD1
-    int16_t mappedX = map(p.yRaw, 250, 3850, 0, SCREEN_WIDTH);
-    int16_t mappedY = map(p.xRaw, 250, 3850, 0, SCREEN_HEIGHT);
-
-    if (mappedX < 0) mappedX = 0;
-    if (mappedX >= SCREEN_WIDTH) mappedX = SCREEN_WIDTH - 1;
-    if (mappedY < 0) mappedY = 0;
-    if (mappedY >= SCREEN_HEIGHT) mappedY = SCREEN_HEIGHT - 1;
-
-    x = mappedX;
-    y = mappedY;
-    Serial.printf("[TOUCH] Pressed at x=%d y=%d (raw: x=%u, y=%u, z=%u)\n", x, y, p.xRaw, p.yRaw, p.zRaw);
-    return true;
+    // 2. GT911 Capacitive Touch (primary for this board)
+    return pollGT911(x, y);
 }
 
 void VaultUI::setLed(bool r, bool b, bool g) {
@@ -135,23 +177,23 @@ void VaultUI::showSplash() {
 
     tft.setTextDatum(TC_DATUM);
     tft.setTextColor(COLOR_AMBER, COLOR_BG);
-    tft.drawString("=== WASTELAND COLD VAULT ===", SCREEN_WIDTH / 2, 16, 2);
+    tft.drawString("=== WASTELAND COLD VAULT ===", SCREEN_WIDTH / 2, 16, 4);
 
     tft.setTextColor(COLOR_PHOSPHOR, COLOR_BG);
-    tft.drawString("CYD-2.8 HARDWARE EDITION", SCREEN_WIDTH / 2, 38, 2);
+    tft.drawString("CYD-3.5 HARDWARE EDITION (ST7796 480x320)", SCREEN_WIDTH / 2, 46, 2);
 
     tft.setTextDatum(TL_DATUM);
-    int y = 66;
-    tft.drawString("> ESP32-D0WDQ6 @ 240MHz: READY", 16, y, 2); y += 19;
-    tft.drawString("> CRYPTO ENGINE: secp256k1 Native", 16, y, 2); y += 19;
-    tft.drawString("> AIR-GAP: WiFi/BT Radios OFF", 16, y, 2); y += 19;
-    tft.drawString("> CHAINS: CAPS Mainnet + BCAP Sidechain", 16, y, 2); y += 19;
-    tft.drawString("> GALLERY: Wasteland Cards (16-bit BMP)", 16, y, 2); y += 19;
-    tft.drawString("> STORAGE: MicroSD PSBT Engine", 16, y, 2); y += 24;
+    int y = 78;
+    tft.drawString("> ESP32-D0WDQ6 @ 240MHz: READY", 32, y, 2); y += 22;
+    tft.drawString("> CRYPTO ENGINE: secp256k1 Native", 32, y, 2); y += 22;
+    tft.drawString("> AIR-GAP: WiFi/BT Radios OFF", 32, y, 2); y += 22;
+    tft.drawString("> CHAINS: CAPS Mainnet + BCAP Sidechain", 32, y, 2); y += 22;
+    tft.drawString("> TOUCH: GT911 Capacitive Display Engine", 32, y, 2); y += 22;
+    tft.drawString("> STORAGE: MicroSD PSBT Engine", 32, y, 2); y += 28;
 
     tft.setTextDatum(TC_DATUM);
     tft.setTextColor(COLOR_AMBER, COLOR_BG);
-    tft.drawString("[ TAP SCREEN TO ENTER VAULT ]", SCREEN_WIDTH / 2, y, 2);
+    tft.drawString("[ TAP SCREEN TO ENTER VAULT ]", SCREEN_WIDTH / 2, y, 4);
 }
 
 void VaultUI::showDashboard(const VaultState& state) {
@@ -160,36 +202,37 @@ void VaultUI::showDashboard(const VaultState& state) {
     drawHeader("CAPS CYD VAULT", state.sdMounted, state.isUnlocked, state.activeChain);
 
     // Active Address Card Box
-    tft.drawRect(8, 28, SCREEN_WIDTH - 16, 44, COLOR_PHOSPHOR_DIM);
+    tft.drawRect(12, 30, SCREEN_WIDTH - 24, 50, COLOR_PHOSPHOR_DIM);
     tft.setTextColor(COLOR_AMBER, COLOR_BG);
     tft.setTextDatum(TL_DATUM);
     char buf[64];
     const char* chainName = (state.activeChain == CHAIN_SIDECHAIN_BCAP) ? "BCAP Sidechain" : "CAPS Mainnet";
     snprintf(buf, sizeof(buf), "%s Address (#%u):", chainName, state.addressIndex);
-    tft.drawString(buf, 14, 32, 2);
+    tft.drawString(buf, 20, 34, 2);
 
     tft.setTextColor(COLOR_WHITE, COLOR_BG);
     if (strlen(state.currentAddress) > 0) {
-        tft.drawString(state.currentAddress, 14, 48, 2);
+        tft.drawString(state.currentAddress, 20, 52, 2);
     } else {
-        tft.drawString("No address loaded (Locked)", 14, 48, 2);
+        tft.drawString("No address loaded (Locked)", 20, 52, 2);
     }
 
     // Button 1: Receive & Show QR
-    drawButton(8, 76, SCREEN_WIDTH - 16, 34, "1. RECEIVE & SHOW QR CODE", COLOR_PHOSPHOR, COLOR_PHOSPHOR);
+    drawButton(12, 88, SCREEN_WIDTH - 24, 44, "1. RECEIVE & SHOW QR CODE", COLOR_PHOSPHOR, COLOR_PHOSPHOR);
 
     // Button 2: Wasteland Card Gallery
     char galleryLabel[48];
     snprintf(galleryLabel, sizeof(galleryLabel), "2. CARD INVENTORY (%u CARDS)", state.totalCards);
-    drawButton(8, 114, SCREEN_WIDTH - 16, 34, galleryLabel, COLOR_TIER4_QUANTUM, COLOR_TIER4_QUANTUM);
+    drawButton(12, 140, SCREEN_WIDTH - 24, 44, galleryLabel, COLOR_TIER4_QUANTUM, COLOR_TIER4_QUANTUM);
 
     // Button 3: Sign Transaction from SD Card
-    drawButton(8, 152, SCREEN_WIDTH - 16, 34, "3. SIGN TRANSACTION (SD CARD)", COLOR_AMBER, COLOR_AMBER);
+    drawButton(12, 192, SCREEN_WIDTH - 24, 44, "3. SIGN TRANSACTION (SD CARD)", COLOR_AMBER, COLOR_AMBER);
 
     // Bottom Row: Chain Switcher & Lock Button
+    int bw = (SCREEN_WIDTH - 36) / 2;
     const char* switchLabel = (state.activeChain == CHAIN_MAINNET_CAPS) ? "SWITCH -> BCAP" : "SWITCH -> CAPS";
-    drawButton(8, 192, 148, 38, switchLabel, COLOR_PHOSPHOR, COLOR_PHOSPHOR);
-    drawButton(164, 192, 148, 38, "LOCK & WIPE", COLOR_ALERT_RED, COLOR_ALERT_RED);
+    drawButton(12, 246, bw, 50, switchLabel, COLOR_PHOSPHOR, COLOR_PHOSPHOR);
+    drawButton(24 + bw, 246, bw, 50, "LOCK & WIPE", COLOR_ALERT_RED, COLOR_ALERT_RED);
 }
 
 void VaultUI::renderQR(const char* payload, int x, int y, int scale) {
@@ -220,23 +263,24 @@ void VaultUI::showReceiveQR(const char* address, uint32_t index, ChainNetwork ch
     tft.fillScreen(COLOR_BG);
     drawHeader("RECEIVE ADDRESS", true, true, chain);
 
-    int qrX = (SCREEN_WIDTH / 2) - 52;
+    int qrX = (SCREEN_WIDTH / 2) - 66;
     int qrY = 30;
-    renderQR(address, qrX, qrY, 3);
+    renderQR(address, qrX, qrY, 4);
 
     tft.setTextColor(COLOR_AMBER, COLOR_BG);
     tft.setTextDatum(TC_DATUM);
     char idxBuf[48];
     uint32_t coinType = (chain == CHAIN_SIDECHAIN_BCAP) ? 1 : 0;
     snprintf(idxBuf, sizeof(idxBuf), "Derivation: m/84'/%u'/0'/0/%u", coinType, index);
-    tft.drawString(idxBuf, SCREEN_WIDTH / 2, 142, 2);
+    tft.drawString(idxBuf, SCREEN_WIDTH / 2, 178, 2);
 
     tft.setTextColor(COLOR_WHITE, COLOR_BG);
-    tft.drawString(address, SCREEN_WIDTH / 2, 162, 2);
+    tft.drawString(address, SCREEN_WIDTH / 2, 202, 2);
 
-    drawButton(8, 196, 96, 36, "< PREV", COLOR_PHOSPHOR, COLOR_PHOSPHOR);
-    drawButton(112, 196, 96, 36, "BACK", COLOR_AMBER, COLOR_AMBER);
-    drawButton(216, 196, 96, 36, "NEXT >", COLOR_PHOSPHOR, COLOR_PHOSPHOR);
+    int btnW = (SCREEN_WIDTH - 48) / 3;
+    drawButton(12, 246, btnW, 48, "< PREV", COLOR_PHOSPHOR, COLOR_PHOSPHOR);
+    drawButton(24 + btnW, 246, btnW, 48, "BACK", COLOR_AMBER, COLOR_AMBER);
+    drawButton(36 + (btnW * 2), 246, btnW, 48, "NEXT >", COLOR_PHOSPHOR, COLOR_PHOSPHOR);
 }
 
 void VaultUI::showCardGallery(const CollectibleCard& card, uint32_t currentIdx, uint32_t totalCards) {
@@ -247,54 +291,55 @@ void VaultUI::showCardGallery(const CollectibleCard& card, uint32_t currentIdx, 
 
     uint16_t tierCol = getTierColor(card.tier);
 
-    // Card frame on left (x: 10, y: 30, w: 130, h: 155)
-    tft.drawRect(10, 30, 130, 155, tierCol);
-    tft.drawRect(11, 31, 128, 153, tierCol);
+    // Card frame on left (x: 16, y: 32, w: 170, h: 198)
+    tft.drawRect(16, 32, 170, 198, tierCol);
+    tft.drawRect(17, 33, 168, 196, tierCol);
 
     bool drawnBmp = false;
     if (strlen(card.imagePath) > 0) {
-        drawnBmp = VaultSD.drawCardBMP(card.imagePath, tft, 14, 34, 122, 147);
+        drawnBmp = VaultSD.drawCardBMP(card.imagePath, tft, 20, 36, 162, 190);
     }
 
     if (!drawnBmp) {
         // Fallback vector bottle-cap graphics
-        tft.fillCircle(75, 107, 44, tierCol);
-        tft.fillCircle(75, 107, 36, COLOR_DARK_GRAY);
+        tft.fillCircle(101, 131, 56, tierCol);
+        tft.fillCircle(101, 131, 46, COLOR_DARK_GRAY);
         tft.setTextColor(tierCol, COLOR_DARK_GRAY);
         tft.setTextDatum(MC_DATUM);
-        tft.drawString("CAP", 75, 107, 4);
+        tft.drawString("CAP", 101, 131, 4);
     }
 
-    // Card Metadata on right (x: 150..310)
+    // Card Metadata on right (x: 202..SCREEN_WIDTH-16)
     tft.setTextDatum(TL_DATUM);
     tft.setTextColor(tierCol, COLOR_BG);
-    tft.drawString(card.title, 150, 34, 4);
+    tft.drawString(card.title, 202, 34, 4);
 
     tft.setTextColor(COLOR_WHITE, COLOR_BG);
     char serBuf[32];
     snprintf(serBuf, sizeof(serBuf), "Serial: #%lld", card.serial);
-    tft.drawString(serBuf, 150, 68, 2);
+    tft.drawString(serBuf, 202, 70, 2);
 
     tft.setTextColor(tierCol, COLOR_BG);
-    tft.drawString(getTierName(card.tier), 150, 88, 2);
+    tft.drawString(getTierName(card.tier), 202, 94, 2);
 
     tft.setTextColor(COLOR_AMBER, COLOR_BG);
-    tft.drawString("Standard: AuxPoW / NFT", 150, 110, 2);
+    tft.drawString("Standard: AuxPoW / NFT", 202, 120, 2);
 
     if (strlen(card.recipeHash) > 0) {
         tft.setTextColor(COLOR_PHOSPHOR_DIM, COLOR_BG);
         char hashBuf[32];
-        snprintf(hashBuf, sizeof(hashBuf), "Hash: %.10s...", card.recipeHash);
-        tft.drawString(hashBuf, 150, 132, 2);
+        snprintf(hashBuf, sizeof(hashBuf), "Hash: %.14s...", card.recipeHash);
+        tft.drawString(hashBuf, 202, 146, 2);
     }
 
     tft.setTextColor(COLOR_WHITE, COLOR_BG);
-    tft.drawString("Status: In Cold Vault", 150, 154, 2);
+    tft.drawString("Status: In Cold Vault", 202, 172, 2);
 
     // Navigation buttons
-    drawButton(8, 196, 96, 36, "< PREV", COLOR_PHOSPHOR, COLOR_PHOSPHOR);
-    drawButton(112, 196, 96, 36, "BACK", COLOR_AMBER, COLOR_AMBER);
-    drawButton(216, 196, 96, 36, "NEXT >", COLOR_PHOSPHOR, COLOR_PHOSPHOR);
+    int btnW = (SCREEN_WIDTH - 48) / 3;
+    drawButton(12, 246, btnW, 48, "< PREV", COLOR_PHOSPHOR, COLOR_PHOSPHOR);
+    drawButton(24 + btnW, 246, btnW, 48, "BACK", COLOR_AMBER, COLOR_AMBER);
+    drawButton(36 + (btnW * 2), 246, btnW, 48, "NEXT >", COLOR_PHOSPHOR, COLOR_PHOSPHOR);
 }
 
 void VaultUI::showSignReview(const UnsignedTxDetails& tx, ChainNetwork chain) {
@@ -302,74 +347,75 @@ void VaultUI::showSignReview(const UnsignedTxDetails& tx, ChainNetwork chain) {
     tft.fillScreen(COLOR_BG);
     drawHeader("TRANSACTION REVIEW", true, true, chain);
 
-    tft.drawRect(6, 28, SCREEN_WIDTH - 12, 154, COLOR_AMBER);
+    tft.drawRect(12, 30, SCREEN_WIDTH - 24, 204, COLOR_AMBER);
     tft.setTextDatum(TL_DATUM);
 
     if (tx.isCardTrade) {
         // WYSIWYS Card Trade View
-        tft.drawRect(10, 32, 90, 110, COLOR_TIER4_QUANTUM);
+        tft.drawRect(20, 38, 120, 140, COLOR_TIER4_QUANTUM);
         if (strlen(tx.tradedCard.imagePath) > 0) {
-            VaultSD.drawCardBMP(tx.tradedCard.imagePath, tft, 12, 34, 86, 106);
+            VaultSD.drawCardBMP(tx.tradedCard.imagePath, tft, 22, 40, 116, 136);
         } else {
             tft.setTextColor(COLOR_TIER4_QUANTUM, COLOR_BG);
             tft.setTextDatum(MC_DATUM);
-            tft.drawString("CARD", 55, 87, 2);
+            tft.drawString("CARD", 80, 108, 4);
             tft.setTextDatum(TL_DATUM);
         }
 
         tft.setTextColor(COLOR_TIER4_QUANTUM, COLOR_BG);
-        tft.drawString("TRADING POST SWAP", 108, 34, 2);
+        tft.drawString("TRADING POST SWAP", 152, 40, 2);
 
         tft.setTextColor(COLOR_WHITE, COLOR_BG);
-        tft.drawString(tx.tradedCard.title, 108, 52, 2);
+        tft.drawString(tx.tradedCard.title, 152, 64, 4);
 
         tft.setTextColor(COLOR_AMBER, COLOR_BG);
-        tft.drawString("PAYOUT:", 108, 72, 2);
+        tft.drawString("PAYOUT:", 152, 100, 2);
         tft.setTextColor(COLOR_PHOSPHOR, COLOR_BG);
         double capsAmt = (double)tx.amountSats / 1e8;
         char amtBuf[32];
         snprintf(amtBuf, sizeof(amtBuf), "%.2f BCAP", capsAmt);
-        tft.drawString(amtBuf, 168, 72, 2);
+        tft.drawString(amtBuf, 220, 100, 2);
 
         tft.setTextColor(COLOR_AMBER, COLOR_BG);
-        tft.drawString("LISTING FEE: 100.00 BCAP", 108, 92, 2);
+        tft.drawString("LISTING FEE: 100.00 BCAP", 152, 124, 2);
 
         tft.setTextColor(COLOR_ALERT_RED, COLOR_BG);
-        tft.drawString("VERIFY CARD BEFORE SIGNING", 12, 152, 2);
+        tft.drawString("VERIFY CARD BEFORE SIGNING", 20, 192, 2);
     } else {
         // Standard Payment / Send View
         tft.setTextColor(COLOR_AMBER, COLOR_BG);
-        tft.drawString("PAY TO:", 12, 34, 2);
+        tft.drawString("PAY TO:", 20, 40, 2);
         tft.setTextColor(COLOR_WHITE, COLOR_BG);
-        tft.drawString(tx.recipient, 12, 52, 2);
+        tft.drawString(tx.recipient, 20, 60, 2);
 
         tft.setTextColor(COLOR_AMBER, COLOR_BG);
-        tft.drawString("AMOUNT:", 12, 74, 2);
+        tft.drawString("AMOUNT:", 20, 88, 2);
         tft.setTextColor(COLOR_PHOSPHOR, COLOR_BG);
         double capsAmt = (double)tx.amountSats / 1e8;
         const char* sym = (chain == CHAIN_SIDECHAIN_BCAP) ? "BCAP" : "CAPS";
         char amtBuf[32];
         snprintf(amtBuf, sizeof(amtBuf), "%.4f %s", capsAmt, sym);
-        tft.drawString(amtBuf, 86, 74, 4);
+        tft.drawString(amtBuf, 96, 88, 4);
 
         tft.setTextColor(COLOR_AMBER, COLOR_BG);
-        tft.drawString("FEE:", 12, 108, 2);
+        tft.drawString("FEE:", 20, 128, 2);
         tft.setTextColor(COLOR_WHITE, COLOR_BG);
         double capsFee = (double)tx.feeSats / 1e8;
         char feeBuf[32];
         snprintf(feeBuf, sizeof(feeBuf), "%.6f %s", capsFee, sym);
-        tft.drawString(feeBuf, 50, 108, 2);
+        tft.drawString(feeBuf, 60, 128, 2);
 
         char metaBuf[48];
         snprintf(metaBuf, sizeof(metaBuf), "Inputs: %u  |  Outputs: %u", tx.inputCount, tx.outputCount);
-        tft.drawString(metaBuf, 12, 130, 2);
+        tft.drawString(metaBuf, 20, 154, 2);
 
         tft.setTextColor(COLOR_ALERT_RED, COLOR_BG);
-        tft.drawString("! VERIFY RECIPIENT ON AIR-GAPPED SCREEN !", 12, 152, 2);
+        tft.drawString("! VERIFY RECIPIENT ON AIR-GAPPED SCREEN !", 20, 192, 2);
     }
 
-    drawButton(8, 190, 148, 42, "X REJECT", COLOR_ALERT_RED, COLOR_ALERT_RED);
-    drawButton(164, 190, 148, 42, "V APPROVE & SIGN", COLOR_PHOSPHOR, COLOR_PHOSPHOR);
+    int bw = (SCREEN_WIDTH - 36) / 2;
+    drawButton(12, 246, bw, 50, "X REJECT", COLOR_ALERT_RED, COLOR_ALERT_RED);
+    drawButton(24 + bw, 246, bw, 50, "V APPROVE & SIGN", COLOR_PHOSPHOR, COLOR_PHOSPHOR);
 }
 
 void VaultUI::showSignedSuccess(const char* signedBase64, const char* filename) {
@@ -379,18 +425,18 @@ void VaultUI::showSignedSuccess(const char* signedBase64, const char* filename) 
 
     int qrX = (SCREEN_WIDTH / 2) - 52;
     int qrY = 30;
-    renderQR(signedBase64, qrX, qrY, 2);
+    renderQR(signedBase64, qrX, qrY, 3);
 
     tft.setTextColor(COLOR_PHOSPHOR, COLOR_BG);
     tft.setTextDatum(TC_DATUM);
-    tft.drawString("SAVED TO SD CARD:", SCREEN_WIDTH / 2, 146, 2);
+    tft.drawString("SAVED TO SD CARD:", SCREEN_WIDTH / 2, 168, 2);
 
     tft.setTextColor(COLOR_WHITE, COLOR_BG);
     char buf[64];
     snprintf(buf, sizeof(buf), "signed_%s", filename);
-    tft.drawString(buf, SCREEN_WIDTH / 2, 166, 2);
+    tft.drawString(buf, SCREEN_WIDTH / 2, 194, 2);
 
-    drawButton(60, 194, 200, 38, "RETURN TO DASHBOARD", COLOR_AMBER, COLOR_AMBER);
+    drawButton(80, 246, SCREEN_WIDTH - 160, 48, "RETURN TO DASHBOARD", COLOR_AMBER, COLOR_AMBER);
 }
 
 void VaultUI::showLocked() {
@@ -398,28 +444,28 @@ void VaultUI::showLocked() {
     tft.fillScreen(COLOR_BG);
     drawHeader("VAULT LOCKED", false, false, CHAIN_MAINNET_CAPS);
 
-    tft.drawRect(8, 36, SCREEN_WIDTH - 16, 140, COLOR_ALERT_RED);
+    tft.drawRect(12, 34, SCREEN_WIDTH - 24, 196, COLOR_ALERT_RED);
     tft.setTextDatum(TC_DATUM);
     tft.setTextColor(COLOR_ALERT_RED, COLOR_BG);
-    tft.drawString("MEMORY ZEROIZED & LOCKED", SCREEN_WIDTH / 2, 54, 4);
+    tft.drawString("MEMORY ZEROIZED & LOCKED", SCREEN_WIDTH / 2, 58, 4);
 
     tft.setTextColor(COLOR_WHITE, COLOR_BG);
-    tft.drawString("All private keys and seeds have been", SCREEN_WIDTH / 2, 94, 2);
-    tft.drawString("scrubbed from RAM buffers.", SCREEN_WIDTH / 2, 114, 2);
-    tft.drawString("No keys exist on flash storage.", SCREEN_WIDTH / 2, 134, 2);
+    tft.drawString("All private keys and seeds have been", SCREEN_WIDTH / 2, 102, 2);
+    tft.drawString("scrubbed from RAM buffers.", SCREEN_WIDTH / 2, 126, 2);
+    tft.drawString("No keys exist on flash storage.", SCREEN_WIDTH / 2, 150, 2);
 
-    drawButton(40, 190, 240, 40, "INITIALIZE / UNLOCK", COLOR_PHOSPHOR, COLOR_PHOSPHOR);
+    drawButton(80, 246, SCREEN_WIDTH - 160, 48, "INITIALIZE / UNLOCK", COLOR_PHOSPHOR, COLOR_PHOSPHOR);
 }
 
 void VaultUI::showMessage(const char* title, const char* msg, uint16_t color) {
-    tft.fillRect(20, 60, SCREEN_WIDTH - 40, 120, COLOR_BG);
-    tft.drawRect(20, 60, SCREEN_WIDTH - 40, 120, color);
-    tft.drawRect(22, 62, SCREEN_WIDTH - 44, 116, color);
+    tft.fillRect(30, 80, SCREEN_WIDTH - 60, 140, COLOR_BG);
+    tft.drawRect(30, 80, SCREEN_WIDTH - 60, 140, color);
+    tft.drawRect(32, 82, SCREEN_WIDTH - 64, 136, color);
 
     tft.setTextDatum(TC_DATUM);
     tft.setTextColor(color, COLOR_BG);
-    tft.drawString(title, SCREEN_WIDTH / 2, 74, 4);
+    tft.drawString(title, SCREEN_WIDTH / 2, 98, 4);
 
     tft.setTextColor(COLOR_WHITE, COLOR_BG);
-    tft.drawString(msg, SCREEN_WIDTH / 2, 118, 2);
+    tft.drawString(msg, SCREEN_WIDTH / 2, 150, 2);
 }

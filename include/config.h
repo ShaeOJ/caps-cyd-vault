@@ -51,9 +51,13 @@
 #define LED_B      17
 #endif
 
-// Screen Dimensions
-#define SCREEN_WIDTH   320
-#define SCREEN_HEIGHT  240
+// Screen Dimensions (CYD 3.5" ST7796 480x320 Landscape)
+#ifndef SCREEN_WIDTH
+#define SCREEN_WIDTH   480
+#endif
+#ifndef SCREEN_HEIGHT
+#define SCREEN_HEIGHT  320
+#endif
 
 // UI Theme: Pip-Boy / Wasteland Phosphor Palette (RGB565)
 #define COLOR_BG          0x0000 // Pure Black

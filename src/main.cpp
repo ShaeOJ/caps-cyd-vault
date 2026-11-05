@@ -81,13 +81,13 @@ void loop() {
             }
 
             case SCREEN_DASHBOARD: {
-                // Button 1: Show Receive QR Code (y: 76..110)
-                if (ty >= 76 && ty <= 110) {
+                // Button 1: Show Receive QR Code (y: 84..136)
+                if (ty >= 84 && ty <= 136) {
                     state.currentScreen = SCREEN_RECEIVE_QR;
                     UI.showReceiveQR(state.currentAddress, state.addressIndex, state.activeChain);
                 }
-                // Button 2: Card Inventory / Gallery (y: 114..148)
-                else if (ty >= 114 && ty <= 148) {
+                // Button 2: Card Inventory / Gallery (y: 138..188)
+                else if (ty >= 138 && ty <= 188) {
                     if (state.totalCards > 0) {
                         state.currentScreen = SCREEN_CARD_GALLERY;
                         UI.showCardGallery(cards[state.currentCardIndex], state.currentCardIndex, state.totalCards);
@@ -104,8 +104,8 @@ void loop() {
                         }
                     }
                 }
-                // Button 3: Sign Transaction from SD (y: 152..186)
-                else if (ty >= 152 && ty <= 186) {
+                // Button 3: Sign Transaction from SD (y: 190..240)
+                else if (ty >= 190 && ty <= 240) {
                     if (!state.sdMounted && !VaultSD.begin()) {
                         UI.showMessage("NO SD CARD", "Insert MicroSD with .psbt file", COLOR_ALERT_RED);
                         delay(1500);
@@ -132,32 +132,35 @@ void loop() {
                         UI.showDashboard(state);
                     }
                 }
-                // Bottom Row Left: Switch Network Chain (x: 8..156, y: 192..230)
-                else if (tx >= 8 && tx <= 156 && ty >= 192 && ty <= 230) {
-                    if (state.activeChain == CHAIN_MAINNET_CAPS) {
-                        state.activeChain = CHAIN_SIDECHAIN_BCAP;
-                    } else {
-                        state.activeChain = CHAIN_MAINNET_CAPS;
+                // Bottom Row: y: 242..305
+                else if (ty >= 242 && ty <= 305) {
+                    // Left Button: Switch Network Chain (tx < SCREEN_WIDTH / 2)
+                    if (tx < SCREEN_WIDTH / 2) {
+                        if (state.activeChain == CHAIN_MAINNET_CAPS) {
+                            state.activeChain = CHAIN_SIDECHAIN_BCAP;
+                        } else {
+                            state.activeChain = CHAIN_MAINNET_CAPS;
+                        }
+                        refreshVaultAddress();
+                        UI.showDashboard(state);
                     }
-                    refreshVaultAddress();
-                    UI.showDashboard(state);
-                }
-                // Bottom Row Right: Lock Vault & Wipe Keys (x: 164..312, y: 192..230)
-                else if (tx >= 164 && tx <= 312 && ty >= 192 && ty <= 230) {
-                    VaultCrypto.wipe();
-                    state.isUnlocked = false;
-                    state.currentAddress[0] = '\0';
-                    state.currentScreen = SCREEN_LOCKED;
-                    UI.showLocked();
+                    // Right Button: Lock Vault & Wipe Keys (tx >= SCREEN_WIDTH / 2)
+                    else {
+                        VaultCrypto.wipe();
+                        state.isUnlocked = false;
+                        state.currentAddress[0] = '\0';
+                        state.currentScreen = SCREEN_LOCKED;
+                        UI.showLocked();
+                    }
                 }
                 break;
             }
 
             case SCREEN_CARD_GALLERY: {
-                // Navigation buttons at y: 196..234
-                if (ty >= 196 && ty <= 234) {
-                    // < PREV (x: 8..104)
-                    if (tx >= 8 && tx <= 104) {
+                // Navigation buttons at y: 242..305
+                if (ty >= 242 && ty <= 305) {
+                    // < PREV (tx < 160)
+                    if (tx < 160) {
                         if (state.totalCards > 0) {
                             if (state.currentCardIndex > 0) {
                                 state.currentCardIndex--;
@@ -167,13 +170,13 @@ void loop() {
                             UI.showCardGallery(cards[state.currentCardIndex], state.currentCardIndex, state.totalCards);
                         }
                     }
-                    // BACK (x: 112..208)
-                    else if (tx >= 112 && tx <= 208) {
+                    // BACK (160 <= tx < 320)
+                    else if (tx >= 160 && tx < 320) {
                         state.currentScreen = SCREEN_DASHBOARD;
                         UI.showDashboard(state);
                     }
-                    // NEXT > (x: 216..312)
-                    else if (tx >= 216 && tx <= 312) {
+                    // NEXT > (tx >= 320)
+                    else {
                         if (state.totalCards > 0) {
                             if (state.currentCardIndex + 1 < state.totalCards) {
                                 state.currentCardIndex++;
@@ -188,17 +191,17 @@ void loop() {
             }
 
             case SCREEN_RECEIVE_QR: {
-                if (ty >= 196 && ty <= 232) {
-                    if (tx >= 8 && tx <= 104) {
+                if (ty >= 242 && ty <= 305) {
+                    if (tx < 160) {
                         if (state.addressIndex > 0) {
                             state.addressIndex--;
                             refreshVaultAddress();
                             UI.showReceiveQR(state.currentAddress, state.addressIndex, state.activeChain);
                         }
-                    } else if (tx >= 112 && tx <= 208) {
+                    } else if (tx >= 160 && tx < 320) {
                         state.currentScreen = SCREEN_DASHBOARD;
                         UI.showDashboard(state);
-                    } else if (tx >= 216 && tx <= 312) {
+                    } else {
                         state.addressIndex++;
                         refreshVaultAddress();
                         UI.showReceiveQR(state.currentAddress, state.addressIndex, state.activeChain);
@@ -208,12 +211,15 @@ void loop() {
             }
 
             case SCREEN_SIGN_REVIEW: {
-                if (ty >= 190 && ty <= 232) {
-                    if (tx >= 8 && tx <= 156) {
+                if (ty >= 242 && ty <= 305) {
+                    // Reject (tx < SCREEN_WIDTH / 2)
+                    if (tx < SCREEN_WIDTH / 2) {
                         rawUnsignedPSBT = "";
                         state.currentScreen = SCREEN_DASHBOARD;
                         UI.showDashboard(state);
-                    } else if (tx >= 164 && tx <= 312) {
+                    }
+                    // Approve & Sign (tx >= SCREEN_WIDTH / 2)
+                    else {
                         UI.showMessage("SIGNING...", "Generating ECDSA secp256k1", COLOR_PHOSPHOR);
                         String signedBase64, errorMsg;
                         if (VaultCrypto.signPSBT(rawUnsignedPSBT, signedBase64, errorMsg)) {
@@ -232,7 +238,7 @@ void loop() {
             }
 
             case SCREEN_SIGNED_SUCCESS: {
-                if (ty >= 194 && ty <= 232) {
+                if (ty >= 240 && ty <= 305) {
                     rawUnsignedPSBT = "";
                     state.currentScreen = SCREEN_DASHBOARD;
                     UI.showDashboard(state);
@@ -241,7 +247,7 @@ void loop() {
             }
 
             case SCREEN_LOCKED: {
-                if (ty >= 190 && ty <= 230) {
+                if (ty >= 240 && ty <= 305) {
                     unlockVault();
                     state.currentScreen = SCREEN_DASHBOARD;
                     UI.showDashboard(state);
