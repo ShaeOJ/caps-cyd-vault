@@ -3,8 +3,14 @@
 #include <TFT_eSPI.h>
 #include <XPT2046_Touchscreen.h>
 #include <qrcode.h>
+
+#if __has_include("vault_types.h")
 #include "config.h"
 #include "vault_types.h"
+#else
+#include "../../include/config.h"
+#include "../../include/vault_types.h"
+#endif
 
 class VaultUI {
 public:
