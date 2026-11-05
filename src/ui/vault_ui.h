@@ -1,6 +1,7 @@
 #pragma once
 #include <Arduino.h>
 #include <TFT_eSPI.h>
+#include <XPT2046_Bitbang.h>
 #include <qrcode.h>
 
 #include "../../include/config.h"
@@ -35,9 +36,7 @@ public:
 
 private:
     TFT_eSPI tft;
-
-    // Software SPI Bitbang Touch Controller (XPT2046)
-    uint16_t xptTransfer(uint8_t cmd);
+    XPT2046_Bitbang ts;
 
     void drawHeader(const char* title, bool sdOk, bool unlocked, ChainNetwork chain);
     void drawButton(int x, int y, int w, int h, const char* label, uint16_t borderColor, uint16_t textColor);

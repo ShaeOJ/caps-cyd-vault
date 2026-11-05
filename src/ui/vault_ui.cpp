@@ -3,38 +3,7 @@
 
 VaultUI UI;
 
-VaultUI::VaultUI() {
-}
-
-uint16_t VaultUI::xptTransfer(uint8_t cmd) {
-    digitalWrite(TOUCH_CS, LOW);
-    delayMicroseconds(2);
-
-    // Send 8-bit command (MSB first)
-    for (int i = 7; i >= 0; i--) {
-        digitalWrite(TOUCH_MOSI, (cmd >> i) & 1);
-        delayMicroseconds(1);
-        digitalWrite(TOUCH_CLK, HIGH);
-        delayMicroseconds(2);
-        digitalWrite(TOUCH_CLK, LOW);
-        delayMicroseconds(1);
-    }
-
-    // Read 12-bit data (MSB first)
-    uint16_t val = 0;
-    for (int i = 11; i >= 0; i--) {
-        digitalWrite(TOUCH_CLK, HIGH);
-        delayMicroseconds(2);
-        if (digitalRead(TOUCH_MISO)) {
-            val |= (1 << i);
-        }
-        digitalWrite(TOUCH_CLK, LOW);
-        delayMicroseconds(1);
-    }
-
-    digitalWrite(TOUCH_CS, HIGH);
-    delayMicroseconds(2);
-    return val;
+VaultUI::VaultUI() : ts(TOUCH_MOSI, TOUCH_MISO, TOUCH_CLK, TOUCH_CS, SCREEN_WIDTH, SCREEN_HEIGHT) {
 }
 
 void VaultUI::begin() {
@@ -56,20 +25,34 @@ void VaultUI::begin() {
     tft.setRotation(1); // 320x240 landscape
     tft.fillScreen(COLOR_BG);
 
-    // Initialize bit-bang touch controller (completely independent of hardware SPI / SD card)
-    pinMode(TOUCH_CS, OUTPUT);
-    digitalWrite(TOUCH_CS, HIGH);
-    pinMode(TOUCH_CLK, OUTPUT);
-    digitalWrite(TOUCH_CLK, LOW);
-    pinMode(TOUCH_MOSI, OUTPUT);
-    digitalWrite(TOUCH_MOSI, LOW);
-    pinMode(TOUCH_MISO, INPUT);
-    pinMode(TOUCH_IRQ, INPUT);
+    // Initialize bit-bang touch controller (completely independent of hardware SPI & SD card)
+    ts.begin();
+    ts.setCalibration(250, 3850, 250, 3850);
 
-    // Prime controller into power-down mode with PENIRQ enabled
-    xptTransfer(0xD0);
+    Serial.println("[UI] Display and XPT2046 Bitbang Touch initialized (320x240)");
+}
 
-    Serial.println("[UI] Display and Software Bitbang Touch initialized (320x240)");
+bool VaultUI::getTouch(int16_t& x, int16_t& y) {
+    TouchPoint p = ts.getTouch();
+    if (p.zRaw < 100) {
+        return false;
+    }
+
+    // In landscape rotation 1 (320x240):
+    // CYD 2.8 resistive panel maps raw X to screen height and raw Y to screen width
+    // XPT2046_Bitbang reads xRaw from 0x91 and yRaw from 0xD1
+    int16_t mappedX = map(p.yRaw, 250, 3850, 0, SCREEN_WIDTH);
+    int16_t mappedY = map(p.xRaw, 250, 3850, 0, SCREEN_HEIGHT);
+
+    if (mappedX < 0) mappedX = 0;
+    if (mappedX >= SCREEN_WIDTH) mappedX = SCREEN_WIDTH - 1;
+    if (mappedY < 0) mappedY = 0;
+    if (mappedY >= SCREEN_HEIGHT) mappedY = SCREEN_HEIGHT - 1;
+
+    x = mappedX;
+    y = mappedY;
+    Serial.printf("[TOUCH] Pressed at x=%d y=%d (raw: x=%u, y=%u, z=%u)\n", x, y, p.xRaw, p.yRaw, p.zRaw);
+    return true;
 }
 
 void VaultUI::setLed(bool r, bool b, bool g) {
@@ -96,46 +79,6 @@ const char* VaultUI::getTierName(int tier) {
         case 2: return "Tier 2 Standard";
         default: return "Tier 1 Scrap";
     }
-}
-
-bool VaultUI::getTouch(int16_t& x, int16_t& y) {
-    // Quick hardware PENIRQ check if available
-    if (digitalRead(TOUCH_IRQ) == HIGH) {
-        return false;
-    }
-
-    // Measure pressure Z
-    uint16_t z1 = xptTransfer(0xB1);
-    uint16_t z2 = xptTransfer(0xC1);
-    int32_t z = (int32_t)z1 + 4095 - (int32_t)z2;
-    if (z < 250) {
-        return false;
-    }
-
-    // Discard initial noisy sample
-    xptTransfer(0x91);
-
-    // Read X and Y coordinates (rotation 1 / landscape mapping)
-    uint16_t rawX = xptTransfer(0xD1);
-    uint16_t rawY = xptTransfer(0x90); // final read powers down with PENIRQ active
-
-    if (rawX < 150 || rawX > 3950 || rawY < 150 || rawY > 3950) {
-        return false;
-    }
-
-    // Map calibrated ADC values (approx 250..3850) to 320x240 screen
-    int16_t mappedX = map(rawX, 250, 3850, 0, SCREEN_WIDTH);
-    int16_t mappedY = map(rawY, 250, 3850, 0, SCREEN_HEIGHT);
-
-    if (mappedX < 0) mappedX = 0;
-    if (mappedX >= SCREEN_WIDTH) mappedX = SCREEN_WIDTH - 1;
-    if (mappedY < 0) mappedY = 0;
-    if (mappedY >= SCREEN_HEIGHT) mappedY = SCREEN_HEIGHT - 1;
-
-    x = mappedX;
-    y = mappedY;
-    Serial.printf("[TOUCH] rawX=%u rawY=%u z=%d -> x=%d y=%d\n", rawX, rawY, z, x, y);
-    return true;
 }
 
 void VaultUI::drawHeader(const char* title, bool sdOk, bool unlocked, ChainNetwork chain) {
