@@ -7,22 +7,29 @@
 
 static VaultState state;
 static String rawUnsignedPSBT = "";
+static CollectibleCard cards[MAX_GALLERY_CARDS];
 
-// Default demo mnemonic for initial testing (BIP-39 test seed)
-// Users can provide their own seed via /seed.txt on the MicroSD card.
 static const char* DEFAULT_MNEMONIC = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 
 void refreshVaultAddress() {
     if (VaultCrypto.isUnlocked()) {
-        String addr = VaultCrypto.getAddress(state.addressIndex);
+        String addr = VaultCrypto.getAddress(state.addressIndex, state.activeChain);
         strncpy(state.currentAddress, addr.c_str(), sizeof(state.currentAddress) - 1);
     } else {
         state.currentAddress[0] = '\0';
     }
 }
 
+void loadCardsFromSD() {
+    if (state.sdMounted) {
+        state.totalCards = VaultSD.scanCards(cards, MAX_GALLERY_CARDS);
+        state.currentCardIndex = 0;
+    } else {
+        state.totalCards = 0;
+    }
+}
+
 void unlockVault() {
-    // Check if custom seed exists on SD card
     String seedMnemonic = DEFAULT_MNEMONIC;
     if (VaultSD.isMounted()) {
         File f = SD.open("/seed.txt", FILE_READ);
@@ -49,18 +56,14 @@ void setup() {
     Serial.println("\n========================================");
     Serial.println("  CAPS CYD VAULT — Cold Hardware Wallet ");
     Serial.println("  Target: ESP32-2432S028R (CYD 2.8)     ");
+    Serial.println("  Chains: CAPS Mainnet + BCAP Sidechain ");
     Serial.println("========================================");
 
-    // 1. Initialize Display & Touch UI
     UI.begin();
-
-    // 2. Initialize MicroSD Card
     state.sdMounted = VaultSD.begin();
-
-    // 3. Unlock initial vault
+    loadCardsFromSD();
     unlockVault();
 
-    // 4. Show Splash
     state.currentScreen = SCREEN_SPLASH;
     UI.showSplash();
 }
@@ -68,7 +71,6 @@ void setup() {
 void loop() {
     int16_t tx = 0, ty = 0;
     if (UI.getTouch(tx, ty)) {
-        // Debounce touch
         delay(180);
 
         switch (state.currentScreen) {
@@ -79,13 +81,31 @@ void loop() {
             }
 
             case SCREEN_DASHBOARD: {
-                // Button 1: Show Receive QR Code (y: 96..134)
-                if (ty >= 96 && ty <= 134) {
+                // Button 1: Show Receive QR Code (y: 76..110)
+                if (ty >= 76 && ty <= 110) {
                     state.currentScreen = SCREEN_RECEIVE_QR;
-                    UI.showReceiveQR(state.currentAddress, state.addressIndex);
+                    UI.showReceiveQR(state.currentAddress, state.addressIndex, state.activeChain);
                 }
-                // Button 2: Sign Transaction from SD (y: 142..180)
-                else if (ty >= 142 && ty <= 180) {
+                // Button 2: Card Inventory / Gallery (y: 114..148)
+                else if (ty >= 114 && ty <= 148) {
+                    if (state.totalCards > 0) {
+                        state.currentScreen = SCREEN_CARD_GALLERY;
+                        UI.showCardGallery(cards[state.currentCardIndex], state.currentCardIndex, state.totalCards);
+                    } else {
+                        // Scan cards again or show notice
+                        loadCardsFromSD();
+                        if (state.totalCards > 0) {
+                            state.currentScreen = SCREEN_CARD_GALLERY;
+                            UI.showCardGallery(cards[state.currentCardIndex], state.currentCardIndex, state.totalCards);
+                        } else {
+                            UI.showMessage("EMPTY INVENTORY", "Place .bmp cards in /cards/ on SD", COLOR_AMBER);
+                            delay(2000);
+                            UI.showDashboard(state);
+                        }
+                    }
+                }
+                // Button 3: Sign Transaction from SD (y: 152..186)
+                else if (ty >= 152 && ty <= 186) {
                     if (!state.sdMounted && !VaultSD.begin()) {
                         UI.showMessage("NO SD CARD", "Insert MicroSD with .psbt file", COLOR_ALERT_RED);
                         delay(1500);
@@ -98,9 +118,9 @@ void loop() {
                     if (VaultSD.findUnsignedFile(filename, content)) {
                         rawUnsignedPSBT = content;
                         strncpy(state.pendingTx.filename, filename.c_str(), sizeof(state.pendingTx.filename) - 1);
-                        if (VaultCrypto.parsePSBTFile(content, state.pendingTx)) {
+                        if (VaultCrypto.parsePSBTFile(content, state.pendingTx, state.activeChain)) {
                             state.currentScreen = SCREEN_SIGN_REVIEW;
-                            UI.showSignReview(state.pendingTx);
+                            UI.showSignReview(state.pendingTx, state.activeChain);
                         } else {
                             UI.showMessage("INVALID PSBT", "File could not be parsed", COLOR_ALERT_RED);
                             delay(2000);
@@ -112,8 +132,18 @@ void loop() {
                         UI.showDashboard(state);
                     }
                 }
-                // Button 3: Lock Vault & Wipe Keys (y: 188..226)
-                else if (ty >= 188 && ty <= 226) {
+                // Bottom Row Left: Switch Network Chain (x: 8..156, y: 192..230)
+                else if (tx >= 8 && tx <= 156 && ty >= 192 && ty <= 230) {
+                    if (state.activeChain == CHAIN_MAINNET_CAPS) {
+                        state.activeChain = CHAIN_SIDECHAIN_BCAP;
+                    } else {
+                        state.activeChain = CHAIN_MAINNET_CAPS;
+                    }
+                    refreshVaultAddress();
+                    UI.showDashboard(state);
+                }
+                // Bottom Row Right: Lock Vault & Wipe Keys (x: 164..312, y: 192..230)
+                else if (tx >= 164 && tx <= 312 && ty >= 192 && ty <= 230) {
                     VaultCrypto.wipe();
                     state.isUnlocked = false;
                     state.currentAddress[0] = '\0';
@@ -123,15 +153,18 @@ void loop() {
                 break;
             }
 
-            case SCREEN_RECEIVE_QR: {
-                // Navigation buttons at y: 196..232
-                if (ty >= 196 && ty <= 232) {
+            case SCREEN_CARD_GALLERY: {
+                // Navigation buttons at y: 196..234
+                if (ty >= 196 && ty <= 234) {
                     // < PREV (x: 8..104)
                     if (tx >= 8 && tx <= 104) {
-                        if (state.addressIndex > 0) {
-                            state.addressIndex--;
-                            refreshVaultAddress();
-                            UI.showReceiveQR(state.currentAddress, state.addressIndex);
+                        if (state.totalCards > 0) {
+                            if (state.currentCardIndex > 0) {
+                                state.currentCardIndex--;
+                            } else {
+                                state.currentCardIndex = state.totalCards - 1; // Wrap around
+                            }
+                            UI.showCardGallery(cards[state.currentCardIndex], state.currentCardIndex, state.totalCards);
                         }
                     }
                     // BACK (x: 112..208)
@@ -141,29 +174,49 @@ void loop() {
                     }
                     // NEXT > (x: 216..312)
                     else if (tx >= 216 && tx <= 312) {
+                        if (state.totalCards > 0) {
+                            if (state.currentCardIndex + 1 < state.totalCards) {
+                                state.currentCardIndex++;
+                            } else {
+                                state.currentCardIndex = 0; // Wrap around
+                            }
+                            UI.showCardGallery(cards[state.currentCardIndex], state.currentCardIndex, state.totalCards);
+                        }
+                    }
+                }
+                break;
+            }
+
+            case SCREEN_RECEIVE_QR: {
+                if (ty >= 196 && ty <= 232) {
+                    if (tx >= 8 && tx <= 104) {
+                        if (state.addressIndex > 0) {
+                            state.addressIndex--;
+                            refreshVaultAddress();
+                            UI.showReceiveQR(state.currentAddress, state.addressIndex, state.activeChain);
+                        }
+                    } else if (tx >= 112 && tx <= 208) {
+                        state.currentScreen = SCREEN_DASHBOARD;
+                        UI.showDashboard(state);
+                    } else if (tx >= 216 && tx <= 312) {
                         state.addressIndex++;
                         refreshVaultAddress();
-                        UI.showReceiveQR(state.currentAddress, state.addressIndex);
+                        UI.showReceiveQR(state.currentAddress, state.addressIndex, state.activeChain);
                     }
                 }
                 break;
             }
 
             case SCREEN_SIGN_REVIEW: {
-                // Action buttons at y: 190..232
                 if (ty >= 190 && ty <= 232) {
-                    // REJECT (x: 8..156)
                     if (tx >= 8 && tx <= 156) {
                         rawUnsignedPSBT = "";
                         state.currentScreen = SCREEN_DASHBOARD;
                         UI.showDashboard(state);
-                    }
-                    // APPROVE & SIGN (x: 164..312)
-                    else if (tx >= 164 && tx <= 312) {
+                    } else if (tx >= 164 && tx <= 312) {
                         UI.showMessage("SIGNING...", "Generating ECDSA secp256k1", COLOR_PHOSPHOR);
                         String signedBase64, errorMsg;
                         if (VaultCrypto.signPSBT(rawUnsignedPSBT, signedBase64, errorMsg)) {
-                            // Save to SD Card
                             VaultSD.saveSignedPSBT(state.pendingTx.filename, signedBase64);
                             state.currentScreen = SCREEN_SIGNED_SUCCESS;
                             UI.showSignedSuccess(signedBase64.c_str(), state.pendingTx.filename);
@@ -179,7 +232,6 @@ void loop() {
             }
 
             case SCREEN_SIGNED_SUCCESS: {
-                // Button: Return to Dashboard (y: 194..232)
                 if (ty >= 194 && ty <= 232) {
                     rawUnsignedPSBT = "";
                     state.currentScreen = SCREEN_DASHBOARD;
@@ -189,7 +241,6 @@ void loop() {
             }
 
             case SCREEN_LOCKED: {
-                // Button: Initialize / Unlock (y: 190..230)
                 if (ty >= 190 && ty <= 230) {
                     unlockVault();
                     state.currentScreen = SCREEN_DASHBOARD;

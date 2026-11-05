@@ -66,14 +66,21 @@
 #define COLOR_DARK_GRAY   0x2104 // Dark Panel Gray
 #define COLOR_GRID_LINE   0x01E0 // Subtle Grid Green
 
-// Bottlecaps Network Parameters
+// Collectible Card Tier Colors (RGB565)
+#define COLOR_TIER1_SCRAP     0x8410 // Gray
+#define COLOR_TIER2_STANDARD  0x07E0 // Green
+#define COLOR_TIER3_REFINED   0x051F // Cyan / Blue
+#define COLOR_TIER4_QUANTUM   0xA01F // Violet / Purple
+#define COLOR_TIER5_FORGED    0xFDE0 // Gold / Amber
+
+// Network Parameters — Mainnet (CAPS)
 #define CAPS_HRP          "btlcap"
 #define CAPS_REGTEST_HRP  "btlcaprt"
-#define CAPS_PUBKEY_HASH  0x19 // 'B' (base58)
-#define CAPS_SCRIPT_HASH  0x32 // 'M' (base58)
-#define CAPS_WIF          0x99
+#define CAPS_PUBKEY_HASH  0x19 // 'B'
+#define CAPS_SCRIPT_HASH  0x32 // 'M'
 #define CAPS_COINTYPE     0
 #define CAPS_PURPOSE      84   // BIP84 Native SegWit (P2WPKH)
 
-// Default Derivation Path
-#define CAPS_DERIVATION_PATH "m/84'/0'/0'/0/0"
+// Network Parameters — Sidechain (BCAP)
+#define BCAP_SIDECHAIN_HRP "bcap"
+#define BCAP_COINTYPE      1   // m/84'/1'/0'

@@ -16,15 +16,15 @@ public:
     void wipe();
 
     // Address Derivation
-    String getAddress(uint32_t index = 0, uint32_t chain = 0, bool regtest = false);
-    String getAccountXpub(bool regtest = false);
+    String getAddress(uint32_t index = 0, ChainNetwork chain = CHAIN_MAINNET_CAPS, uint32_t chainBranch = 0);
+    String getAccountXpub(ChainNetwork chain = CHAIN_MAINNET_CAPS);
 
     // PSBT & Transaction Processing
-    bool parsePSBTFile(const String& base64Content, UnsignedTxDetails& outDetails);
+    bool parsePSBTFile(const String& base64Content, UnsignedTxDetails& outDetails, ChainNetwork currentChain = CHAIN_MAINNET_CAPS);
     bool signPSBT(const String& base64Content, String& signedBase64, String& errorMsg);
 
     // Helpers
-    static String formatSats(uint64_t sats);
+    static String formatSats(uint64_t sats, ChainNetwork chain = CHAIN_MAINNET_CAPS);
     static uint64_t capsToSats(double caps);
     static double satsToCaps(uint64_t sats);
 
@@ -32,7 +32,7 @@ private:
     HDPrivateKey* masterKey = nullptr;
     bool unlocked = false;
 
-    String encodeSegwitAddress(const uint8_t* pubKeyHash20, bool regtest);
+    String encodeSegwitAddress(const uint8_t* pubKeyHash20, const char* hrp);
 };
 
 extern CapsCrypto VaultCrypto;

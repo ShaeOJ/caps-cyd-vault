@@ -17,9 +17,10 @@ public:
     // Screen Renderers
     void showSplash();
     void showDashboard(const VaultState& state);
-    void showReceiveQR(const char* address, uint32_t index);
-    void showSignReview(const UnsignedTxDetails& tx);
+    void showReceiveQR(const char* address, uint32_t index, ChainNetwork chain);
+    void showSignReview(const UnsignedTxDetails& tx, ChainNetwork chain);
     void showSignedSuccess(const char* signedBase64, const char* filename);
+    void showCardGallery(const CollectibleCard& card, uint32_t currentIdx, uint32_t totalCards);
     void showLocked();
     void showMessage(const char* title, const char* msg, uint16_t color = COLOR_PHOSPHOR);
 
@@ -29,13 +30,17 @@ public:
     // LED Status
     void setLed(bool r, bool g, bool b);
 
+    // TFT Direct Access (for BMP rendering)
+    TFT_eSPI& getTft() { return tft; }
+
 private:
     TFT_eSPI tft;
-    SPIClass touchSpi;
     XPT2046_Touchscreen ts;
 
-    void drawHeader(const char* title, bool sdOk, bool unlocked);
+    void drawHeader(const char* title, bool sdOk, bool unlocked, ChainNetwork chain);
     void drawButton(int x, int y, int w, int h, const char* label, uint16_t borderColor, uint16_t textColor);
+    uint16_t getTierColor(int tier);
+    const char* getTierName(int tier);
 };
 
 extern VaultUI UI;

@@ -39,19 +39,21 @@ void CapsCrypto::wipe() {
     unlocked = false;
 }
 
-String CapsCrypto::encodeSegwitAddress(const uint8_t* pubKeyHash20, bool regtest) {
+String CapsCrypto::encodeSegwitAddress(const uint8_t* pubKeyHash20, const char* hrp) {
     char addr[80] = {0};
-    const char* hrp = regtest ? CAPS_REGTEST_HRP : CAPS_HRP;
     segwit_addr_encode(addr, hrp, 0, pubKeyHash20, 20);
     return String(addr);
 }
 
-String CapsCrypto::getAddress(uint32_t index, uint32_t chain, bool regtest) {
+String CapsCrypto::getAddress(uint32_t index, ChainNetwork chain, uint32_t chainBranch) {
     if (!isUnlocked()) return "";
 
-    // BIP84: m/84'/0'/0'/chain/index
+    uint32_t coinType = (chain == CHAIN_SIDECHAIN_BCAP) ? BCAP_COINTYPE : CAPS_COINTYPE;
+    const char* hrp = (chain == CHAIN_SIDECHAIN_BCAP) ? BCAP_SIDECHAIN_HRP : CAPS_HRP;
+
+    // BIP84: m/84'/<coin>'/0'/<branch>/<index>
     char path[64];
-    snprintf(path, sizeof(path), "m/84'/%d'/0'/%d/%d", CAPS_COINTYPE, chain, index);
+    snprintf(path, sizeof(path), "m/84'/%u'/0'/%u/%u", coinType, chainBranch, index);
     HDPrivateKey child = masterKey->derive(path);
     if (!child.isValid()) return "";
 
@@ -62,18 +64,19 @@ String CapsCrypto::getAddress(uint32_t index, uint32_t chain, bool regtest) {
     uint8_t hash20[20] = {0};
     hash160(secArr, secLen, hash20);
 
-    return encodeSegwitAddress(hash20, regtest);
+    return encodeSegwitAddress(hash20, hrp);
 }
 
-String CapsCrypto::getAccountXpub(bool regtest) {
+String CapsCrypto::getAccountXpub(ChainNetwork chain) {
     if (!isUnlocked()) return "";
+    uint32_t coinType = (chain == CHAIN_SIDECHAIN_BCAP) ? BCAP_COINTYPE : CAPS_COINTYPE;
     char path[64];
-    snprintf(path, sizeof(path), "m/84'/%d'/0'", CAPS_COINTYPE);
+    snprintf(path, sizeof(path), "m/84'/%u'/0'", coinType);
     HDPublicKey accountXpub = masterKey->derive(path).xpub();
     return accountXpub.xpub();
 }
 
-bool CapsCrypto::parsePSBTFile(const String& base64Content, UnsignedTxDetails& outDetails) {
+bool CapsCrypto::parsePSBTFile(const String& base64Content, UnsignedTxDetails& outDetails, ChainNetwork currentChain) {
     PSBT psbt;
     size_t parsed = psbt.parseBase64(base64Content);
     if (parsed == 0 || !psbt.isValid()) {
@@ -88,6 +91,9 @@ bool CapsCrypto::parsePSBTFile(const String& base64Content, UnsignedTxDetails& o
 
     outDetails.recipient[0] = '\0';
     outDetails.amountSats = 0;
+    outDetails.isCardTrade = false;
+
+    const char* hrp = (currentChain == CHAIN_SIDECHAIN_BCAP) ? BCAP_SIDECHAIN_HRP : CAPS_HRP;
 
     for (uint8_t i = 0; i < psbt.tx.outputsNumber; i++) {
         bool isChange = false;
@@ -100,14 +106,13 @@ bool CapsCrypto::parsePSBTFile(const String& base64Content, UnsignedTxDetails& o
             char addr[80] = {0};
             psbt.tx.txOuts[i].address(addr, sizeof(addr), &Mainnet);
             
-            // If uBitcoin encoded as bc1..., re-encode witness with btlcap
+            // Re-encode witness program with active network HRP
             if (strncmp(addr, "bc1", 3) == 0) {
-                // Get witness program and re-encode
                 uint8_t prog[40];
                 size_t progLen = 0;
                 int ver = 0;
                 if (segwit_addr_decode(&ver, prog, &progLen, "bc", addr)) {
-                    segwit_addr_encode(addr, CAPS_HRP, ver, prog, progLen);
+                    segwit_addr_encode(addr, hrp, ver, prog, progLen);
                 }
             }
             strncpy(outDetails.recipient, addr, sizeof(outDetails.recipient) - 1);
@@ -140,10 +145,11 @@ bool CapsCrypto::signPSBT(const String& base64Content, String& signedBase64, Str
     return true;
 }
 
-String CapsCrypto::formatSats(uint64_t sats) {
+String CapsCrypto::formatSats(uint64_t sats, ChainNetwork chain) {
     double caps = (double)sats / 1e8;
+    const char* sym = (chain == CHAIN_SIDECHAIN_BCAP) ? "BCAP" : "CAPS";
     char buf[32];
-    snprintf(buf, sizeof(buf), "%.4f BCAP", caps);
+    snprintf(buf, sizeof(buf), "%.4f %s", caps, sym);
     return String(buf);
 }
 
